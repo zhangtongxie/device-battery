@@ -57,6 +57,36 @@ def autostart_enabled() -> bool:
     return os.path.exists(shortcut_path())
 
 
+def shortcut_target() -> str:
+    """读 .lnk 指向的目标路径（读不到返回空串）。"""
+    path = shortcut_path()
+    if not os.path.exists(path):
+        return ""
+    ps = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8;"
+          "(New-Object -ComObject WScript.Shell).CreateShortcut('{lnk}').TargetPath").format(lnk=path)
+    try:
+        flags = 0x08000000 if os.name == "nt" else 0
+        r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-Command", ps], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
+                           timeout=20, creationflags=flags)
+        return (r.stdout or "").strip()
+    except Exception:
+        return ""
+
+
+def refresh_autostart() -> tuple[bool, str]:
+    """自启开着、但快捷方式指向旧位置（程序被挪过目录）时自动修好。"""
+    if not autostart_enabled():
+        return False, "未开启"
+    target, _ = _target_and_args()
+    cur = shortcut_target()
+    if cur and os.path.normcase(cur) == os.path.normcase(target) and os.path.exists(cur):
+        return True, "ok"
+    ok, msg = set_autostart(True)
+    return ok, "已修正" if ok else msg
+
+
 def _target_and_args() -> tuple[str, str]:
     if getattr(sys, "frozen", False):
         return sys.executable, ""
@@ -84,6 +114,7 @@ def set_autostart(enabled: bool) -> tuple[bool, str]:
         flags = 0x08000000 if os.name == "nt" else 0
         r = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
                             "-Command", ps], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
                            timeout=25, creationflags=flags)
         if r.returncode != 0 or not os.path.exists(path):
             return False, (r.stderr or "创建快捷方式失败").strip()[:120]

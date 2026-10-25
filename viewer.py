@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import queue
+import threading
 import time
 import tkinter as tk
 from tkinter import ttk
@@ -375,6 +376,18 @@ def run(start_hidden: bool = False) -> None:
     import tray as tray_mod
 
     st = cfg.load()
+
+    # 自启开着但快捷方式指向旧位置（程序被挪过目录）时，后台自动修好
+    def _fix_autostart() -> None:
+        try:
+            ok, msg = cfg.refresh_autostart()
+            if msg not in ("ok", "未开启"):
+                print(f"[autostart] {msg}", flush=True)
+        except Exception:
+            pass
+
+    threading.Thread(target=_fix_autostart, daemon=True).start()
+
     m = mon.Monitor(mouse_interval=float(st.get("mouse_interval", 5.0)),
                     show_bt=bool(st.get("show_bluetooth", True)),
                     disabled=set(st.get("disabled_devices") or [])).start()

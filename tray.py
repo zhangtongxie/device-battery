@@ -106,7 +106,8 @@ class Tray:
     def _tip(self, reading) -> str:
         level = "—" if reading.level is None else f"{reading.level}%"
         extra = "" if reading.status == "ok" else f"（{reading.status_text}）"
-        return f"{reading.name} {level}{extra}"[:120]
+        bolt = " ⚡充电中" if getattr(reading, "charging", False) else ""
+        return f"{reading.name} {level}{bolt}{extra}"[:120]
 
     def _diag(self) -> str:
         """失败时抓一点现场：任务栏窗口、能不能给它发消息、是否管理员。"""

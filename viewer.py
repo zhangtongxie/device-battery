@@ -51,9 +51,14 @@ class Card(tk.Frame):
                             font=("Segoe UI", 30, "bold"), anchor="w")
         self.pct.grid(row=1, column=0, sticky="w", padx=px(16), pady=(px(2), 0))
 
-        self.tag = tk.Label(self, text=reading.transport, bg=CARD, fg=SUB,
+        self.right = tk.Frame(self, bg=CARD)
+        self.right.grid(row=1, column=1, sticky="e", padx=px(16))
+        self.chg = tk.Label(self.right, text="", bg=CARD, fg="#2f8f4e",
+                            font=("Microsoft YaHei UI", 9, "bold"), anchor="e")
+        self.chg.pack(side="top", anchor="e")
+        self.tag = tk.Label(self.right, text=reading.transport, bg=CARD, fg=SUB,
                             font=("Microsoft YaHei UI", 9), anchor="e")
-        self.tag.grid(row=1, column=1, sticky="e", padx=px(16))
+        self.tag.pack(side="top", anchor="e")
 
         self.bar = tk.Canvas(self, height=px(10), bg=CARD, highlightthickness=0, bd=0)
         self.bar.grid(row=2, column=0, columnspan=2, sticky="we", padx=px(16), pady=(px(6), 0))
@@ -75,6 +80,7 @@ class Card(tk.Frame):
         if r.status == "cached" and r.age_text():
             status += f" {r.age_text()}"
         self.tag.config(text=f"{r.transport}{status}", fg=SUB if r.status == "ok" else AMBER)
+        self.chg.config(text="⚡ 充电中" if r.charging else "")
         when = r.age_text()
         detail = r.detail
         if has and when and r.status in ("idle", "error", "offline"):
@@ -99,7 +105,7 @@ class App(tk.Tk):
             dpi = float(self.winfo_fpixels("1i"))
         except Exception:
             dpi = 96.0
-        SCALE = max(1.0, dpi / 96.0)
+        SCALE = float(os.environ.get("DSH_UI_SCALE") or max(1.0, dpi / 96.0))
         try:
             self.tk.call("tk", "scaling", dpi / 72.0)
         except Exception:

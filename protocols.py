@@ -265,11 +265,15 @@ def read_sc580(retries: int = 2) -> Reading:
             model = bytes(data[8:12]).decode("ascii", "ignore")
             fw = bytes(data[24:28]).decode("ascii", "ignore")
             volt = data[15] / 10.0
+            # 充电时锂电池端电压会顶到 4.0V 以上；满电静置也在 4.1 左右，
+            # 所以只在「电压高 + 电量没满」时判定为充电中（宁可漏报，不误报）。
+            charging = bool(volt >= 4.05 and level < 98)
             _SC580_CACHE.update(level=level, ts=time.time(), model=model, fw=fw)
             remember("sc580", level)
+            extra = "，充电中" if charging else ""
             return Reading("sc580", "狼蛛 SC580", "mouse", level=level, status="ok",
-                           source="sc580", updated=time.time(),
-                           detail=f"型号 {model}，{volt:.1f}V，固件 {fw}")
+                           source="sc580", updated=time.time(), charging=charging,
+                           detail=f"型号 {model}，{volt:.1f}V{extra}，固件 {fw}")
 
     level, ts = cached("sc580")
     if level is not None:

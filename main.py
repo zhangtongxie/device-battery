@@ -99,12 +99,21 @@ def main(argv: list[str] | None = None) -> int:
                     help="--once 时等待键盘推送电量的秒数（默认 16，键盘每 15 秒推一次）")
     ap.add_argument("--list", action="store_true", help="列出所有 HID 接口")
     ap.add_argument("--hidden", action="store_true", help="只留状态栏图标，不弹面板")
+    ap.add_argument("--dump", action="store_true",
+                    help="抓原始报文到 battery-dump.txt（排障 / 找充电标志位）")
+    ap.add_argument("--seconds", type=float, default=30.0, help="--dump 的时长（秒）")
     args = ap.parse_args(argv)
 
     if args.list:
         for d in hw.enumerate_hid():
             print(d)
             print("   ", d.path)
+        return 0
+
+    if args.dump:
+        import dumpraw
+        path = dumpraw.run(args.seconds)
+        print("已写入:", path)
         return 0
 
     if not (args.once or args.json) and _activate_existing():

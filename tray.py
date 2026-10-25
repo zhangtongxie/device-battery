@@ -106,8 +106,7 @@ class Tray:
     def _tip(self, reading) -> str:
         level = "—" if reading.level is None else f"{reading.level}%"
         extra = "" if reading.status == "ok" else f"（{reading.status_text}）"
-        bolt = " ⚡充电中" if getattr(reading, "charging", False) else ""
-        return f"{reading.name} {level}{bolt}{extra}"[:120]
+        return f"{reading.name} {level}{extra}"[:120]
 
     def _diag(self) -> str:
         """失败时抓一点现场：任务栏窗口、能不能给它发消息、是否管理员。"""
@@ -136,6 +135,34 @@ class Tray:
         except Exception:
             pass
 
+    def _promote(self) -> None:
+        """Windows 11 默认把新图标塞进 ^ 折叠区；把 HKCU 里的 IsPromoted 置 1 试着提出来。"""
+        try:
+            import winreg
+            base = r"Control Panel\NotifyIconSettings"
+            exe = os.path.normcase(sys.executable)
+            hits = 0
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, base) as root:
+                n = winreg.QueryInfoKey(root)[0]
+                for i in range(n):
+                    sub = winreg.EnumKey(root, i)
+                    try:
+                        with winreg.OpenKey(root, sub) as sk:
+                            path, _ = winreg.QueryValueEx(sk, "ExecutablePath")
+                    except OSError:
+                        continue
+                    if os.path.normcase(path) != exe:
+                        continue
+                    try:
+                        with winreg.OpenKey(root, sub, 0, winreg.KEY_SET_VALUE) as wk:
+                            winreg.SetValueEx(wk, "IsPromoted", 0, winreg.REG_DWORD, 1)
+                        hits += 1
+                    except OSError as e:
+                        self._log(f"IsPromoted 写入失败 {sub}: {e}")
+            self._log(f"托盘提升：匹配 {hits} 项（重启 explorer 后生效）")
+        except Exception as e:
+            self._log(f"托盘提升失败：{e}")
+
     def _add(self, key: str, reading) -> None:
         self._uid += 1
         nid = NOTIFYICONDATAW()
@@ -144,7 +171,8 @@ class Tray:
         nid.uID = self._uid
         nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP
         nid.uCallbackMessage = WM_TRAY
-        nid.hIcon = iconfx.icon_for(reading.level, reading.kind, self._light)
+        nid.hIcon = iconfx.icon_for(reading.level, reading.kind, self._light,
+                                    charging=bool(reading.charging))
         nid.szTip = self._tip(reading)
         if not shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(nid)):
             err = ctypes.get_last_error()
@@ -154,26 +182,33 @@ class Tray:
                 self._log(f"NIM_ADD 失败 err={err}（hwnd={self._hwnd} hIcon={nid.hIcon}）")
                 print("[tray] 图标添加失败（错误码", err, "）", flush=True)
             return
+        was_ok = self.ok
         self.ok = True
         self.last_error = ""
         self._extra = ""
+        if not was_ok:
+            threading.Thread(target=self._promote, daemon=True).start()
         nid.uVersion = NOTIFYICON_VERSION_4
         shell32.Shell_NotifyIconW(NIM_SETVERSION, ctypes.byref(nid))
         self._items[key] = {"nid": nid, "level": reading.level,
                             "kind": reading.kind, "tip": nid.szTip,
-                            "status": reading.status}
-        self._log(f"图标已添加 key={key} uid={nid.uID} level={reading.level}")
+                            "status": reading.status,
+                            "charging": bool(reading.charging)}
+        self._log(f"图标已添加 key={key} uid={nid.uID} level={reading.level} "
+                  f"charging={bool(reading.charging)}")
 
     def _update(self, key: str, reading) -> None:
         item = self._items[key]
         tip = self._tip(reading)
         need_icon = (reading.level != item["level"] or reading.kind != item["kind"]
-                     or reading.status != item["status"])
+                     or reading.status != item["status"]
+                     or bool(reading.charging) != item.get("charging", False))
         if not need_icon and tip == item["tip"]:
             return
         nid = item["nid"]
         if need_icon:
-            nid.hIcon = iconfx.icon_for(reading.level, reading.kind, self._light)
+            nid.hIcon = iconfx.icon_for(reading.level, reading.kind, self._light,
+                                        charging=bool(reading.charging))
         nid.szTip = tip
         shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(nid))
         item.update(level=reading.level, kind=reading.kind, tip=tip, status=reading.status)

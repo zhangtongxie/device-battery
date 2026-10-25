@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 settings.json
 battery-cache.json
+battery-dump.txt
 tray.log
 *.lnk
 

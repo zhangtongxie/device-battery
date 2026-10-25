@@ -21,6 +21,8 @@ SIZE = 48
 SS = 4
 R_OUT = 0.498
 R_IN = 0.336
+BLUE2 = (56, 150, 236)      # 充电渐变：蓝
+GREEN2 = (46, 196, 138)     # 充电渐变：绿
 R_CAP = (R_OUT + R_IN) / 2
 
 GLYPH_FILL = 0.80         # 图标占内圆直径的比例
@@ -151,7 +153,30 @@ def _level_color(level: int | None):
     return RED
 
 
-def render(level: int | None, kind: str = "other", light: bool = False, size: int = SIZE) -> bytes:
+_BOLT = [(-0.12, -0.50), (0.28, -0.50), (0.02, -0.06), (0.30, -0.06),
+         (-0.22, 0.50), (-0.02, 0.06), (-0.30, 0.06)]
+
+
+def _bolt_cov(x: float, y: float, scale: float = 1.0) -> float:
+    """右下角小闪电（充电中标记）。x/y 是图标坐标（-0.5..0.5）。"""
+    s = 0.40 * scale
+    bu = (x - 0.27) / s
+    bv = (y - 0.27) / s
+    inside = False
+    j = len(_BOLT) - 1
+    for i in range(len(_BOLT)):
+        xi, yi = _BOLT[i]
+        xj, yj = _BOLT[j]
+        if (yi > bv) != (yj > bv):
+            x = xi + (bv - yi) * (xj - xi) / (yj - yi)
+            if bu < x:
+                inside = not inside
+        j = i
+    return 1.0 if inside else 0.0
+
+
+def render(level: int | None, kind: str = "other", light: bool = False, size: int = SIZE,
+           charging: bool = False) -> bytes:
     pct = 0.0 if level is None else max(0.0, min(100.0, level)) / 100.0
     arc = None if level is None else _level_color(level)
     track = (206, 211, 220) if light else (94, 101, 118)
@@ -175,17 +200,27 @@ def render(level: int | None, kind: str = "other", light: bool = False, size: in
                     d = math.hypot(fx, fy)
                     col = None
                     if R_IN <= d <= R_OUT:
+                        ang = (math.degrees(math.atan2(fy, fx)) + 90.0) % 360.0
+                        filled = arc is not None and ang <= sweep
                         if arc is None:
                             col = track
+                        elif not filled:
+                            col = track
+                        elif charging:
+                            # 充电：填充弧本身走蓝→绿渐变（弧尾绿、弧头蓝）
+                            t = min(1.0, ang / max(1e-6, sweep))
+                            col = (int(BLUE2[0] + (GREEN2[0] - BLUE2[0]) * t),
+                                   int(BLUE2[1] + (GREEN2[1] - BLUE2[1]) * t),
+                                   int(BLUE2[2] + (GREEN2[2] - BLUE2[2]) * t))
                         else:
-                            ang = (math.degrees(math.atan2(fy, fx)) + 90.0) % 360.0
-                            col = arc if ang <= sweep else track
+                            col = arc
                     if arc is not None and 0 < sweep < 360:
-                        for a_deg in (0.0, sweep):
+                        for a_deg, cap_col in ((0.0, BLUE2 if charging else arc),
+                                               (sweep, GREEN2 if charging else arc)):
                             a = math.radians(a_deg - 90.0)
                             if math.hypot(fx - math.cos(a) * R_CAP,
                                           fy - math.sin(a) * R_CAP) <= half:
-                                col = arc
+                                col = cap_col
                                 break
                     if col is None:
                         continue
@@ -243,12 +278,13 @@ def to_hicon(bgra: bytes, size: int = SIZE) -> int:
 _cache: dict[tuple, int] = {}
 
 
-def icon_for(level: int | None, kind: str = "other", light: bool | None = None) -> int:
+def icon_for(level: int | None, kind: str = "other", light: bool | None = None,
+             charging: bool = False) -> int:
     if light is None:
         light = theme_is_light()
-    key = (level, kind, light)
+    key = (level, kind, light, charging)
     if key in _cache:
         return _cache[key]
-    hicon = to_hicon(render(level, kind, light))
+    hicon = to_hicon(render(level, kind, light, charging=charging))
     _cache[key] = hicon
     return hicon

@@ -78,6 +78,7 @@ class Reading:
     kind: str = "other"          # keyboard / mouse / headset / phone / other
     level: int | None = None
     charging: bool | None = None
+    clamped: bool = False      # 固件把电量钳成 100%，这个数不是真的
     status: str = "ok"
     detail: str = ""
     source: str = ""
@@ -184,9 +185,9 @@ def read_xs98t(listen: float = 4.0, wake: bool = True) -> Reading:
     if level is not None:
         return Reading("xs98t", "GANSS XS98T", "keyboard", level=level, status="cached",
                        updated=ts, source="xs98t", raw=frames,
-                       detail="键盘在省电，显示上次读数；按任意键可更新")
+                       detail="键盘在省电，显示上次读数；按任意键或打开官方驱动软件可唤醒")
     return Reading("xs98t", "GANSS XS98T", "keyboard", status="idle",
-                   detail="没收到电量帧：键盘在省电。按任意键后再刷新。",
+                   detail="没收到电量帧：键盘在省电。按任意键，或打开官方驱动软件后再刷新。",
                    source="xs98t", raw=frames)
 
 
@@ -214,6 +215,9 @@ def find_sc580() -> hw.HidDevice | None:
 #                                型号              3.7V           37%
 # 下标 18 = 电量百分比；下标 15 = 电压（0x25 = 3.7V）；8–11 型号；24–27 固件。
 _SC580_CACHE: dict = {"level": None, "ts": 0.0, "model": "", "fw": ""}
+# 充电钳位跟踪：上一次真实的（没被 100% 钳掉的）电量
+_SC580_STATE: dict = {"last_real": None, "last_ts": 0.0, "charging": False,
+                      "clamp_ts": 0.0}
 _SC580_REQ = bytes([0x0C, 0x01, 0x20, 0x00, 0x0F, 0x01, 0x10, 0x00])
 _SC580_GET = bytes([0x0C, 0x01, 0x20, 0x00, 0x10, 0x01, 0x10, 0x00])
 
@@ -240,6 +244,60 @@ def _sc580_fetch(h, size: int) -> bytes | None:
     return None
 
 
+def _parse_sc580(data: bytes) -> Reading | None:
+    """解析 32 字节状态帧；充电压到 100% 时显示钳位前的真实电量。"""
+    level = data[18]
+    if not (0 < level <= 100):
+        return None
+    model = bytes(data[8:12]).decode("ascii", "ignore")
+    fw = bytes(data[24:28]).decode("ascii", "ignore")
+    volt = data[15] / 10.0
+
+    # 这货充电时固件会把电量直接钳到 100%，跟真充满分不开。
+    # 判据：① 电压顶到 4.05V 以上且电量没满；② 电量从低位一步跳到 99/100
+    #（物理上不可能，只可能是钳位）。钳位时显示充电前那一档真实电量。
+    st = _SC580_STATE
+    if st["last_real"] is None:            # 冷启动：先拿磁盘缓存当历史
+        _lvl, _ts = cached("sc580")
+        if _lvl is not None:
+            st["last_real"] = _lvl
+            st["last_ts"] = _ts
+    last_real = st["last_real"]
+    fresh = (time.time() - st["last_ts"]) < 1800        # 真实读数别太陈旧
+    if level < 99:
+        st["last_real"] = level
+        st["last_ts"] = time.time()
+
+    # 固件充电时把电量钳到 100%。判据：跳变（有历史）或电压顶到 4.1V 以上（冷启动）
+    has_jump = last_real is not None and last_real <= 96 and fresh
+    volt_hint = volt >= 4.10 and last_real is not None and last_real < level
+    clamped = bool(level >= 99 and (has_jump or volt_hint))
+    if clamped:
+        if not st["clamp_ts"]:
+            st["clamp_ts"] = time.time()
+        # 钳位超过 2 小时就当成真的充满了（充电一般也就一两个小时）
+        if time.time() - st["clamp_ts"] > 7200:
+            clamped = False
+    else:
+        st["clamp_ts"] = 0.0
+    charging = bool(clamped or (volt >= 4.05 and level < 98))
+    shown = last_real if (clamped and last_real is not None) else level
+    st["charging"] = charging
+
+    _SC580_CACHE.update(level=shown, ts=time.time(), model=model, fw=fw)
+    remember("sc580", shown)
+    if clamped:
+        tail = f"这里显示充电前的 {shown}%" if last_real is not None else "固件只报 100%"
+        detail = f"型号 {model}，{volt:.1f}V，充电中（{tail}），固件 {fw}"
+    elif charging:
+        detail = f"型号 {model}，{volt:.1f}V，充电中，固件 {fw}"
+    else:
+        detail = f"型号 {model}，{volt:.1f}V，固件 {fw}"
+    return Reading("sc580", "狼蛛 SC580", "mouse", level=shown, status="ok",
+                   source="sc580", updated=time.time(), charging=charging,
+                   clamped=clamped, detail=detail)
+
+
 def read_sc580(retries: int = 2) -> Reading:
     dev = find_sc580_mailbox()
     if not dev:
@@ -260,20 +318,9 @@ def read_sc580(retries: int = 2) -> Reading:
         hw.close_handle(h)
 
     if data and len(data) >= 21 and any(data[8:]):
-        level = data[18]
-        if 0 < level <= 100:
-            model = bytes(data[8:12]).decode("ascii", "ignore")
-            fw = bytes(data[24:28]).decode("ascii", "ignore")
-            volt = data[15] / 10.0
-            # 充电时锂电池端电压会顶到 4.0V 以上；满电静置也在 4.1 左右，
-            # 所以只在「电压高 + 电量没满」时判定为充电中（宁可漏报，不误报）。
-            charging = bool(volt >= 4.05 and level < 98)
-            _SC580_CACHE.update(level=level, ts=time.time(), model=model, fw=fw)
-            remember("sc580", level)
-            extra = "，充电中" if charging else ""
-            return Reading("sc580", "狼蛛 SC580", "mouse", level=level, status="ok",
-                           source="sc580", updated=time.time(), charging=charging,
-                           detail=f"型号 {model}，{volt:.1f}V{extra}，固件 {fw}")
+        reading = _parse_sc580(data)
+        if reading is not None:
+            return reading
 
     level, ts = cached("sc580")
     if level is not None:

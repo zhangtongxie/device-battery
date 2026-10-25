@@ -76,12 +76,12 @@ class Monitor:
             kbd.detail = "0x20 状态帧（键盘推送）"
             if kbd.age > 120:
                 kbd.status = "cached"
-                kbd.detail = "键盘休眠，下面是最后一次读到的电量；按任意键可更新"
+                kbd.detail = "键盘休眠，下面是最后一次读到的电量；按任意键或打开官方驱动软件可更新"
         else:
             level, ts = P.cached("xs98t")
             if level is not None:
                 kbd.level, kbd.updated, kbd.status = level, ts, "cached"
-                kbd.detail = "键盘休眠，显示上次读数；按任意键可更新"
+                kbd.detail = "键盘休眠，显示上次读数；按任意键或打开官方驱动软件可更新"
         out = [kbd, self.sc580] + (bt if self.show_bt else [])
         for r in out:
             self.known[r.key] = r.name
@@ -111,7 +111,7 @@ class Monitor:
                     data = hw.read_report(h, dev.in_len, timeout_ms=500)
                     if data is None:
                         if self._kbd_level is None:
-                            self._set_kbd_status("idle", "键盘休眠：按任意键唤醒后就会推送电量")
+                            self._set_kbd_status("idle", "键盘休眠：按任意键、或打开官方驱动软件后才会推送电量")
                         continue
                     self._handle_frame(data)
             finally:
@@ -126,6 +126,7 @@ class Monitor:
         level = data[4]
         if not (0 <= level <= 100):
             return
+        # 键盘不做充电推断：它的固件/官方驱动都没有充电指示，电量变了就是真的变了
         P.remember("xs98t", level)
         with self._lock:
             self._kbd_level = level

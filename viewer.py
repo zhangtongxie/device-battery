@@ -75,12 +75,16 @@ class Card(tk.Frame):
     def update_reading(self, r: P.Reading) -> None:
         self.reading = r
         has = r.level is not None
-        self.pct.config(text=f"{r.level}%" if has else "—", fg=level_color(r.level))
+        self.pct.config(text=f"{r.level}%" if has else "—", fg=level_color(r.level),
+                        font=("Segoe UI", 30, "bold"))
         status = "" if r.status == "ok" else f" · {r.status_text}"
         if r.status == "cached" and r.age_text():
             status += f" {r.age_text()}"
         self.tag.config(text=f"{r.transport}{status}", fg=SUB if r.status == "ok" else AMBER)
-        self.chg.config(text="⚡ 充电中" if r.charging else "")
+        if r.charging:
+            self.chg.config(text="⚡ 已充满" if (r.level or 0) >= 100 else "⚡ 充电中")
+        else:
+            self.chg.config(text="")
         when = r.age_text()
         detail = r.detail
         if has and when and r.status in ("idle", "error", "offline"):

@@ -18,7 +18,7 @@
 
 ## 下载
 
-到 [Releases](../../releases) 下载 `设备电量-免解压版.zip`，解压后运行 `设备电量.exe`。
+到 [Releases](../../releases) 下载 `device-battery-*-win64.zip`，解压后运行 `设备电量.exe`。
 
 > ⚠️ 别直接在 zip 里双击运行。请先解压到普通目录（或运行包里的 `安装到本地.bat`），
 > 否则文件可能带着低完整性标签，Windows 会让它以低权限启动，**托盘图标会加不上**（`Shell_NotifyIcon` 错误码 5）。
